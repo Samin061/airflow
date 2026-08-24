@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -332,8 +333,12 @@ class TptHook(TtuHook):
                 # Build tdload command more robustly
                 tdload_cmd = self._build_tdload_command(remote_job_file, tdload_options, tdload_job_name)
 
-                self.log.info("Executing tdload command on remote server: %s", " ".join(tdload_cmd))
-                exit_status, output, error = execute_remote_command(ssh_client, " ".join(tdload_cmd))
+                # execute_remote_command runs this through the remote login shell, so every
+                # element must be shell-quoted. tdload_options is a templated field, so an
+                # unquoted value could otherwise inject commands on the remote host.
+                remote_command = " ".join(shlex.quote(part) for part in tdload_cmd)
+                self.log.info("Executing tdload command on remote server: %s", remote_command)
+                exit_status, output, error = execute_remote_command(ssh_client, remote_command)
                 self.log.info("tdload command output:\n%s", output)
                 self.log.info("tdload command exited with status %s", exit_status)
 

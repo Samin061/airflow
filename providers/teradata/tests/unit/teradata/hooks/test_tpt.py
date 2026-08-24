@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -303,6 +304,56 @@ class TestTptHook:
         assert "-v" in call_args
         assert "-u" in call_args
         assert "test_job" in call_args
+
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
+    @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch("airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host")
+    def test_transfer_to_and_execute_tdload_on_remote_quotes_options(
+        self,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+        mock_execute_remote_command,
+        mock_ssh_hook,
+    ):
+        """tdload_options with shell metacharacters must not inject commands on the remote host."""
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+        mock_execute_remote_command.return_value = (0, "ok", "")
+        mock_gen_password.return_value = "test_password"
+
+        hook._transfer_to_and_execute_tdload_on_remote(
+            "/tmp/job_var_file.txt", "/remote/tmp", "; touch /tmp/pwned", "test_job"
+        )
+
+        command = mock_execute_remote_command.call_args[0][1]
+        # The `;` from tdload_options is shell-quoted, so a remote shell runs a single
+        # tdload invocation with literal arguments instead of executing the injected touch.
+        assert shlex.quote(";") in command
+        assert " ; touch" not in command
+        assert shlex.split(command) == [
+            "tdload",
+            "-j",
+            "/remote/tmp/job_var_file.txt",
+            ";",
+            "touch",
+            "/tmp/pwned",
+            "test_job",
+        ]
 
     @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
